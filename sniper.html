@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>OpenStreetMap</title>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+    <link rel="stylesheet" href="https://openlayers.org/en/v6.3.0/css/ol.css" type="text/css">
+    <script src="https://openlayers.org/en/v6.3.0/build/ol.js" type="text/javascript"></script>
+    <style>
+        body {
+            margin: 0px;
+            padding: 0px;
+        }
+        
+        input {
+            position: fixed;
+            right: 0px;
+            top: 0px;
+        }
+        </style>
+    <script>
+    
+    // source: https://gist.github.com/Jezternz/c8e9fafc2c114e079829974e3764db75
+    const csvStringToArray = (data) => {
+        const re = /(,|\r?\n|\r|^)(?:"([^"]*(?:""[^"]*)*)"|([^,\r\n]*))/gi
+        const result = [[]]
+        let matches
+        while ((matches = re.exec(data))) {
+            if (matches[1].length && matches[1] !== ',') result.push([])
+            result[result.length - 1].push(
+            matches[2] !== undefined ? matches[2].replace(/""/g, '"') : matches[3]
+            )
+        }
+        return result
+    }
+    
+    // source: https://stackoverflow.com/a/27709336
+    getGradientColor = function(start_color, end_color, percent) {
+        // strip the leading # if it's there
+        start_color = start_color.replace(/^\s*#|\s*$/g, '');
+        end_color = end_color.replace(/^\s*#|\s*$/g, '');
+
+        // convert 3 char codes --> 6, e.g. `E0F` --> `EE00FF`
+        if(start_color.length == 3){
+            start_color = start_color.replace(/(.)/g, '$1$1');
+        }
+
+        if(end_color.length == 3){
+            end_color = end_color.replace(/(.)/g, '$1$1');
+        }
+
+        // get colors
+        var start_red = parseInt(start_color.substr(0, 2), 16),
+            start_green = parseInt(start_color.substr(2, 2), 16),
+            start_blue = parseInt(start_color.substr(4, 2), 16);
+
+        var end_red = parseInt(end_color.substr(0, 2), 16),
+            end_green = parseInt(end_color.substr(2, 2), 16),
+            end_blue = parseInt(end_color.substr(4, 2), 16);
+
+        // calculate new color
+        var diff_red = end_red - start_red;
+        var diff_green = end_green - start_green;
+        var diff_blue = end_blue - start_blue;
+
+        diff_red = ( (diff_red * percent) + start_red ).toString(16).split('.')[0];
+        diff_green = ( (diff_green * percent) + start_green ).toString(16).split('.')[0];
+        diff_blue = ( (diff_blue * percent) + start_blue ).toString(16).split('.')[0];
+
+        // ensure 2 digits by color
+        if( diff_red.length == 1 ) diff_red = '0' + diff_red
+        if( diff_green.length == 1 ) diff_green = '0' + diff_green
+        if( diff_blue.length == 1 ) diff_blue = '0' + diff_blue
+
+        return '#' + diff_red + diff_green + diff_blue;
+    }
+    
+    //columns in .csv
+    var BSSID = 0
+    var SSID = 1
+    var DATE = 3
+    var LAT = 6
+    var LONG = 7
+    var RSSI = 5
+    
+    
+    var map
+    var zoom = 2
+    
+    function initialize_map() {
+        map = new ol.Map({
+            target: "map",
+            layers: [
+                new ol.layer.Tile({
+                    source: new ol.source.OSM({
+                        url: "https://a.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                    })
+                })
+            ],
+            view: new ol.View({
+                center: ol.proj.fromLonLat([0, 0]),
+                zoom: zoom
+            })
+        })
+    }
+    
+
+    function add_map_point(ap) {
+        var mark = document.createElement('svg')
+        
+        
+        // interpolate color by signal strength
+        rssi_max = -95
+        rssi_min = -55
+        color = getGradientColor("#33FF00", "#FF3300", (ap[RSSI] - rssi_min) / (rssi_max - rssi_min))
+        
+        circle = '<svg width="16" height="16"><circle cx="8" cy="8" r="7" stroke="black" stroke-width="1" fill="' + color + '" /></svg>'
+        
+        mark.innerHTML = circle
+        mark.title = `SSID: ${ap[SSID]}\n` +
+                     `MAC: ${ap[BSSID]}\n` +
+                     `Date: ${ap[DATE]}\n` +
+                     `Signal: ${ap[RSSI]} dBm`
+        
+        var popup = new ol.Overlay({
+            element: mark,
+            positioning: 'center-center',
+            stopEvent: false,
+            position: ol.proj.transform([parseFloat(ap[LONG]), parseFloat(ap[LAT])], 'EPSG:4326', 'EPSG:3857'),
+        })
+        
+        map.addOverlay(popup)
+    }
+
+    function load(input) {
+        file = input.files[0]
+        
+        var reader = new FileReader()
+        reader.readAsText(file)
+        
+        var coords = []
+            
+        reader.onload = function() {
+            
+            data = csvStringToArray(reader.result)
+            
+            // the header row is not expected
+            
+            data.forEach(line => {
+                add_map_point(line)
+                coords.push([parseFloat(line[LONG]), parseFloat(line[LAT])])
+            });
+            
+            // zoom to bounding box
+            var ex = ol.extent.boundingExtent(coords)
+            var areaExtent = ol.extent.applyTransform(ex, ol.proj.getTransform('EPSG:4326', 'EPSG:3857'))
+
+            map.getView().setCenter(areaExtent)
+            map.getView().fit(areaExtent, {padding: [100, 100, 100, 100], duration: 1000})
+        }
+    }
+    </script>
+</head>
+
+<body onload="initialize_map();">
+    <div id="map" style="width: 100vw; height: 100vh;"></div>
+    <div id="box">
+        <input type="file" id="csvInput" onChange="load(this);"></input>
+    </div>
+</body>
+</html>
